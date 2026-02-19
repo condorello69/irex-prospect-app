@@ -29,7 +29,9 @@ async function researchCompanies(
   country: string,
   region: string,
 ): Promise<Record<string, string>[]> {
-  const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+  const geminiKey = process.env.GEMINI_API_KEY?.trim();
+  if (!geminiKey) throw new Error("GEMINI_API_KEY non configurata sul server.");
+  const genAI = new GoogleGenerativeAI(geminiKey);
   const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
   const prompt = `You are a B2B sales research assistant for IREX (Scarabelli Group), an Italian irrigation equipment manufacturer.
@@ -106,11 +108,14 @@ async function createSheet(
   country: string,
   companies: Record<string, string>[],
 ): Promise<string> {
-  const auth = new google.auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET,
-  );
-  auth.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN });
+  const clientId     = process.env.GOOGLE_CLIENT_ID?.trim();
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET?.trim();
+  const refreshToken = process.env.GOOGLE_REFRESH_TOKEN?.trim();
+  if (!clientId || !clientSecret || !refreshToken) {
+    throw new Error("Credenziali Google OAuth non configurate sul server.");
+  }
+  const auth = new google.auth.OAuth2(clientId, clientSecret);
+  auth.setCredentials({ refresh_token: refreshToken });
 
   const sheets = google.sheets({ version: "v4", auth });
   const drive  = google.drive({ version: "v3", auth });
