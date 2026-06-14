@@ -115,5 +115,5 @@ Se hai collegato un repo GitHub, ogni push su `main` fa il deploy automaticament
 
 - **Auth Google**: usa OAuth2 con refresh token (stesso account del progetto Mapping Germany). I Google Sheet vengono creati nel tuo Drive e condivisi pubblicamente in sola lettura.
 - **Timeout**: 60s (max Vercel Hobby). La modalità Veloce impiega tipicamente 15-40s; la Deep Research gira in background (~20 min) e il frontend fa polling.
-- **Modelli AI**: `gemini-2.5-flash` con Google Search Grounding (Veloce, e per l'estrazione stadio 2) · `deep-research-preview-04-2026` via Interactions API (Deep Research). Nota: `gemini-2.0-flash` è stato ritirato dall'API (404), il nome modello è centralizzato in `FLASH_MODEL` in [`lib/research.ts`](lib/research.ts).
+- **Modelli AI** (centralizzati in [`lib/research.ts`](lib/research.ts)): `gemini-2.5-flash-lite` con Google Search Grounding per la modalità **Veloce** (`FAST_MODEL`, scelto per stare sotto i 60s di Vercel Hobby) · `gemini-2.5-flash` per l'estrazione stadio 2 di Deep Research (`FLASH_MODEL`) · `deep-research-preview-04-2026` via Interactions API. Nota: `gemini-2.0-flash` è stato ritirato dall'API (404).
 - **Refresh token**: non scade mai (a meno che non revochi l'accesso manualmente da Google Account → Sicurezza → App con accesso).
