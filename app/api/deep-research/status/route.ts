@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { parseCompanies, countPriorities, createSheet } from "@/lib/research";
+import { extractReportText, extractCompaniesFromReport, countPriorities, createSheet } from "@/lib/research";
 
 // Polled by the client. A single poll is fast; building the Sheet on completion
 // stays well within the 60s Hobby limit.
@@ -40,12 +40,20 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ status: "in_progress" });
     }
 
-    // Completed → parse report, build the Google Sheet (reusing the shared flow)
-    const text: string = data.output_text ?? "";
-    const companies = parseCompanies(text);
+    // Completed → the report lives in steps[model_output].content[].text.
+    // Stage 2: extract structured rows from the narrative report, then build the Sheet.
+    const report = extractReportText(data);
+    if (!report.trim()) {
+      return NextResponse.json(
+        { status: "failed", error: "Deep Research non ha prodotto un report leggibile. Riprova." },
+        { status: 200 },
+      );
+    }
+
+    const companies = await extractCompaniesFromReport(report);
     if (companies.length === 0) {
       return NextResponse.json(
-        { status: "failed", error: "Deep Research non ha restituito aziende. Riprova." },
+        { status: "failed", error: "Nessuna azienda estratta dal report. Riprova." },
         { status: 200 },
       );
     }

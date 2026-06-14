@@ -1,8 +1,13 @@
 // Shared research logic: prompt, JSON parsing, Google Sheet creation.
 // Used by both the fast sync flow (gemini-2.0-flash) and the async Deep Research flow.
 import { google } from "googleapis";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
+// Fast model for the sync flow and for Deep Research extraction.
+// (gemini-2.0-flash was retired — 404 "no longer available".)
+export const FLASH_MODEL = "gemini-2.5-flash";
+
 export const HEADERS = [
   "Nome Azienda", "Città", "Indirizzo", "Telefono", "Email", "Sito Web",
   "Tipo", "Marchi Concorrenti Usati", "Servizi Offerti", "Mercato Target",
@@ -64,12 +69,67 @@ Return ONLY valid JSON — no markdown, no explanation, nothing else:
 }`;
 }
 
-// Deep Research agents produce a narrative report by default. This appendix forces a
-// machine-parsable JSON block at the very end of the output so we can reuse the same parser.
+// Deep Research agents produce a narrative report (they ignore "return only JSON"
+// instructions). So we let the agent research freely, then extract structured data
+// from its report with a cheap gemini-2.0-flash pass (see extractCompaniesFromReport).
 export function buildDeepResearchPrompt(area: string, country: string, region: string): string {
-  return `${buildResearchPrompt(area, country, region)}
+  return `You are a B2B sales research analyst for IREX (Scarabelli Group), an Italian irrigation equipment manufacturer.
 
-CRITICAL OUTPUT REQUIREMENT: Do all your research, then your FINAL message must end with the JSON object above and nothing after it. The JSON must be the last thing in your response so it can be parsed programmatically. Aim for at least 15 companies with as many verified fields (phone, email, website, address, competitor brands) as your research can confirm.`;
+Research the irrigation industry in ${area}, ${country}${region ? ` (${region})` : ""} and identify AT LEAST 15-20 REAL, NAMED companies that could buy or distribute irrigation products.
+
+Include for EACH company, wherever your research can verify it: full company name, city, full address, phone, email, website, the type of business (dealer, distributor, installer, GaLaBau/landscaper, specialized retailer, agricultural cooperative, e-commerce, association), which competitor irrigation brands they sell or use (Netafim, Rivulis, Irritec, Hunter, Rain Bird, Toro, Perrot, Grundfos, DAB, Espa, Caprari, Bauer, Naan, Galcon, K-Rain, Eurodrip, Idrofoglia, Wilo, Pedrollo), the services they offer, and their target market.
+
+Present the companies clearly (a markdown table of named companies with their details is ideal), so each company and its contact data is unambiguous. Prioritise depth and verified contact details over prose.`;
+}
+
+// Deep Research returns its report inside steps[type=model_output].content[].text,
+// NOT in a top-level "output_text" field (the simplified docs are misleading).
+export function extractReportText(interaction: any): string {
+  const steps: any[] = interaction?.steps ?? [];
+  const parts: string[] = [];
+  for (const s of steps) {
+    if (s?.type !== "model_output") continue;
+    for (const c of s?.content ?? []) {
+      if (typeof c?.text === "string") parts.push(c.text);
+    }
+  }
+  return parts.join("\n\n");
+}
+
+// Stage 2: turn the narrative Deep Research report into structured rows with a cheap
+// gemini-2.0-flash pass. A normal model reliably honours the "return only JSON" instruction.
+export async function extractCompaniesFromReport(report: string): Promise<Record<string, string>[]> {
+  const geminiKey = process.env.GEMINI_API_KEY?.trim();
+  if (!geminiKey) throw new Error("GEMINI_API_KEY non configurata sul server.");
+  const genAI = new GoogleGenerativeAI(geminiKey);
+  const model = genAI.getGenerativeModel({ model: FLASH_MODEL });
+
+  const prompt = `Extract EVERY named company from the irrigation market report below into structured data for the IREX sales team.
+
+Priority rules:
+- ALTA  → company openly uses/sells declared competitor brands (Netafim, Rivulis, Irritec, Hunter, Rain Bird, Toro, Perrot, Grundfos, DAB, Espa, Caprari, Bauer, Naan, Galcon, K-Rain, Eurodrip, Idrofoglia, Wilo, Pedrollo)
+- MEDIA → irrigation installer/dealer without declared brands; landscape contractor with irrigation services; cooperatives; e-commerce
+- BASSA → plumber/SHK with irrigation as secondary service; maintenance-only landscapers; associations
+
+Return ONLY valid JSON — no markdown, no explanation:
+{
+  "companies": [
+    {
+      "Nome Azienda": "", "Città": "", "Indirizzo": "", "Telefono": "", "Email": "",
+      "Sito Web": "", "Tipo": "Dealer / GaLaBau / Paesaggista / Fachhandel / SHK / E-commerce / Produttore / Associazione / Cooperativa",
+      "Marchi Concorrenti Usati": "", "Servizi Offerti": "", "Mercato Target": "Residenziale / Agricoltura / Sport / Verde pubblico / B2B",
+      "Priorità": "ALTA or MEDIA or BASSA", "Note Commerciali": "useful notes in Italian for the IREX sales team",
+      "Nome Contatto": "", "Stato": "Da contattare"
+    }
+  ]
+}
+Use empty strings for unknown fields. Include every distinct company mentioned in the report.
+
+REPORT:
+${report}`;
+
+  const result = await model.generateContent(prompt);
+  return parseCompanies(result.response.text());
 }
 
 // ── Parsing ──────────────────────────────────────────────────────────────────
