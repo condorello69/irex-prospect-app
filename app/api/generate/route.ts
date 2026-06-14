@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { FLASH_MODEL, buildResearchPrompt, parseCompanies, countPriorities, createSheet } from "@/lib/research";
+import { FAST_MODEL, buildResearchPrompt, parseCompanies, countPriorities, createSheet } from "@/lib/research";
 
 // Vercel: allow up to 60s (Hobby plan max)
 export const maxDuration = 60;
@@ -14,7 +14,7 @@ async function researchCompanies(
   const geminiKey = process.env.GEMINI_API_KEY?.trim();
   if (!geminiKey) throw new Error("GEMINI_API_KEY non configurata sul server.");
   const genAI = new GoogleGenerativeAI(geminiKey);
-  const model = genAI.getGenerativeModel({ model: FLASH_MODEL });
+  const model = genAI.getGenerativeModel({ model: FAST_MODEL });
 
   const result = await model.generateContent({
     contents: [{ role: "user", parts: [{ text: buildResearchPrompt(area, country, region) }] }],

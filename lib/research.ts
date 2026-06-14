@@ -4,8 +4,11 @@ import { google } from "googleapis";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
-// Fast model for the sync flow and for Deep Research extraction.
 // (gemini-2.0-flash was retired — 404 "no longer available".)
+// FAST_MODEL: sync "Veloce" flow — flash-lite keeps us comfortably under Vercel
+// Hobby's 60s limit. FLASH_MODEL: Deep Research stage-2 extraction (favours quality
+// on a long report; not latency-bound by the 60s cap since it runs on a poll).
+export const FAST_MODEL  = "gemini-2.5-flash-lite";
 export const FLASH_MODEL = "gemini-2.5-flash";
 
 export const HEADERS = [
@@ -28,7 +31,7 @@ const COL_WIDTHS  = [220, 140, 230, 140, 230, 200, 160, 280, 320, 220, 80, 400, 
 export function buildResearchPrompt(area: string, country: string, region: string): string {
   return `You are a B2B sales research assistant for IREX (Scarabelli Group), an Italian irrigation equipment manufacturer.
 
-Search the web and find 15-20 REAL companies in ${area}, ${country}${region ? ` (${region})` : ""} that operate in the irrigation industry.
+Search the web and find 12-15 REAL companies in ${area}, ${country}${region ? ` (${region})` : ""} that operate in the irrigation industry.
 
 Types to find:
 - Irrigation dealers, distributors, and installers
