@@ -25,6 +25,7 @@ export default function Home() {
 
   const cancelled = useRef(false);
   const timerRef  = useRef<ReturnType<typeof setInterval> | null>(null);
+  const interactionIdRef = useRef<string | null>(null);
 
   function stopTimer() {
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
@@ -55,6 +56,7 @@ export default function Home() {
     if (!startRes.ok) throw new Error(start.error ?? "Avvio fallito");
 
     const { interactionId } = start;
+    interactionIdRef.current = interactionId;
     setPhase("Ricerca in corso… l'agente naviga il web (può durare ~20 min)");
 
     // start elapsed counter
@@ -75,6 +77,7 @@ export default function Home() {
       if (!res.ok) throw new Error(data.error ?? "Errore durante il polling");
 
       if (data.status === "completed") {
+        interactionIdRef.current = null; // done — nothing to cancel
         setResult(data);
         return;
       }
@@ -109,6 +112,14 @@ export default function Home() {
     stopTimer();
     setLoading(false);
     setPhase("");
+    // Stop the running interaction server-side so it stops billing
+    const id = interactionIdRef.current;
+    if (id) {
+      interactionIdRef.current = null;
+      fetch(`/api/deep-research/status?interactionId=${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      }).catch(() => {/* best-effort */});
+    }
   }
 
   const mm = String(Math.floor(elapsed / 60)).padStart(2, "0");

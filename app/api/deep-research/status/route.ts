@@ -68,3 +68,29 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
+
+// Cancel a running interaction so it stops billing. The Interactions API has no
+// ":cancel" method, but DELETE on the resource removes (and halts) it.
+export async function DELETE(req: NextRequest) {
+  try {
+    const geminiKey = process.env.GEMINI_API_KEY?.trim();
+    if (!geminiKey) throw new Error("GEMINI_API_KEY non configurata sul server.");
+
+    const { searchParams } = new URL(req.url);
+    const interactionId = searchParams.get("interactionId");
+    if (!interactionId) {
+      return NextResponse.json({ error: "interactionId mancante." }, { status: 400 });
+    }
+
+    await fetch(`${INTERACTIONS_URL}/${interactionId}`, {
+      method: "DELETE",
+      headers: { "x-goog-api-key": geminiKey, "Api-Revision": "2026-05-20" },
+    });
+
+    return NextResponse.json({ cancelled: true });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Errore interno del server.";
+    console.error("[deep-research/status DELETE]", err);
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
+}
