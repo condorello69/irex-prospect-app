@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 type Result = {
   url: string;
@@ -8,35 +8,122 @@ type Result = {
   counts: { ALTA: number; MEDIA: number; BASSA: number };
 };
 
+type Mode = "fast" | "deep";
+
+const POLL_INTERVAL_MS = 10_000;
+
 export default function Home() {
   const [country, setCountry] = useState("");
   const [area, setArea]       = useState("");
   const [region, setRegion]   = useState("");
+  const [mode, setMode]       = useState<Mode>("fast");
   const [loading, setLoading] = useState(false);
+  const [phase, setPhase]     = useState("");          // status text for deep mode
+  const [elapsed, setElapsed] = useState(0);           // seconds, deep mode
   const [result, setResult]   = useState<Result | null>(null);
   const [error, setError]     = useState("");
 
+  const cancelled = useRef(false);
+  const timerRef  = useRef<ReturnType<typeof setInterval> | null>(null);
+  const interactionIdRef = useRef<string | null>(null);
+
+  function stopTimer() {
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+  }
+
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  async function runFast() {
+    const res  = await fetch("/api/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ area, country, region }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error ?? "Errore sconosciuto");
+    setResult(data);
+  }
+
+  async function runDeep() {
+    // 1. Start the background interaction
+    setPhase("Avvio Deep Research…");
+    const startRes = await fetch("/api/deep-research/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ area, country, region }),
+    });
+    const start = await startRes.json();
+    if (!startRes.ok) throw new Error(start.error ?? "Avvio fallito");
+
+    const { interactionId } = start;
+    interactionIdRef.current = interactionId;
+    setPhase("Ricerca in corso… l'agente naviga il web (può durare ~20 min)");
+
+    // start elapsed counter
+    setElapsed(0);
+    timerRef.current = setInterval(() => setElapsed((s) => s + 1), 1000);
+
+    // 2. Poll until completed / failed
+    while (!cancelled.current) {
+      await sleep(POLL_INTERVAL_MS);
+      if (cancelled.current) return;
+
+      const res  = await fetch("/api/deep-research/status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ interactionId, area, country }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Errore durante il polling");
+
+      if (data.status === "completed") {
+        interactionIdRef.current = null; // done — nothing to cancel
+        setResult(data);
+        return;
+      }
+      if (data.status === "failed") {
+        throw new Error(data.error ?? "Deep Research fallito");
+      }
+      // else in_progress → keep polling
+    }
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    cancelled.current = false;
     setLoading(true);
     setResult(null);
     setError("");
+    setPhase("");
 
     try {
-      const res  = await fetch("/api/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ area, country, region }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Errore sconosciuto");
-      setResult(data);
+      if (mode === "deep") await runDeep();
+      else await runFast();
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Errore sconosciuto");
+      if (!cancelled.current) setError(err instanceof Error ? err.message : "Errore sconosciuto");
     } finally {
+      stopTimer();
       setLoading(false);
     }
   }
+
+  function handleCancel() {
+    cancelled.current = true;
+    stopTimer();
+    setLoading(false);
+    setPhase("");
+    // Stop the running interaction server-side so it stops billing
+    const id = interactionIdRef.current;
+    if (id) {
+      interactionIdRef.current = null;
+      fetch(`/api/deep-research/status?interactionId=${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      }).catch(() => {/* best-effort */});
+    }
+  }
+
+  const mm = String(Math.floor(elapsed / 60)).padStart(2, "0");
+  const ss = String(elapsed % 60).padStart(2, "0");
 
   return (
     <main className="min-h-screen flex flex-col items-center justify-center p-6">
@@ -99,12 +186,61 @@ export default function Home() {
               />
             </div>
 
+            {/* Mode selector */}
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">
+                Modalità ricerca
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={() => setMode("fast")}
+                  className={`rounded-lg border px-3 py-2.5 text-left transition-colors disabled:opacity-50 ${
+                    mode === "fast"
+                      ? "border-[#1F497D] bg-blue-50 ring-1 ring-[#1F497D]"
+                      : "border-gray-200 hover:border-gray-300"
+                  }`}
+                >
+                  <div className="text-sm font-semibold text-gray-800">Veloce</div>
+                  <div className="text-[11px] text-gray-400 leading-tight mt-0.5">
+                    Gemini Flash · ~30 s · pochi cent.
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={() => setMode("deep")}
+                  className={`rounded-lg border px-3 py-2.5 text-left transition-colors disabled:opacity-50 ${
+                    mode === "deep"
+                      ? "border-[#1F497D] bg-blue-50 ring-1 ring-[#1F497D]"
+                      : "border-gray-200 hover:border-gray-300"
+                  }`}
+                >
+                  <div className="text-sm font-semibold text-gray-800">Deep Research</div>
+                  <div className="text-[11px] text-gray-400 leading-tight mt-0.5">
+                    Agente · ~20 min · ~$2
+                  </div>
+                </button>
+              </div>
+              {mode === "deep" && (
+                <p className="text-[11px] text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2 leading-relaxed">
+                  Ricerca approfondita: naviga molte fonti e verifica i dati. Costa ~$2 e richiede
+                  fino a ~20 minuti. Tieni questa scheda aperta fino al termine.
+                </p>
+              )}
+            </div>
+
             <button
               type="submit"
               disabled={loading}
               className="w-full bg-[#1F497D] hover:bg-[#163660] active:bg-[#0f2540] disabled:bg-gray-300 text-white font-semibold py-3 rounded-lg transition-colors text-sm mt-2"
             >
-              {loading ? "Ricerca in corso…" : "Genera Google Sheet"}
+              {loading
+                ? "Ricerca in corso…"
+                : mode === "deep"
+                ? "Avvia Deep Research"
+                : "Genera Google Sheet"}
             </button>
           </form>
 
@@ -112,11 +248,28 @@ export default function Home() {
           {loading && (
             <div className="flex flex-col items-center gap-3 pt-2 text-gray-400">
               <div className="w-8 h-8 border-[3px] border-[#1F497D] border-t-transparent rounded-full animate-spin" />
-              <p className="text-sm text-center leading-relaxed">
-                Gemini sta cercando le aziende…
-                <br />
-                <span className="text-xs text-gray-300">Può richiedere fino a 60 secondi</span>
-              </p>
+              {mode === "deep" ? (
+                <div className="text-center space-y-2">
+                  <p className="text-sm leading-relaxed">
+                    {phase || "Deep Research in corso…"}
+                    <br />
+                    <span className="text-xs text-gray-300">Tempo trascorso: {mm}:{ss}</span>
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleCancel}
+                    className="text-xs text-gray-400 underline hover:text-gray-600"
+                  >
+                    Annulla attesa
+                  </button>
+                </div>
+              ) : (
+                <p className="text-sm text-center leading-relaxed">
+                  Gemini sta cercando le aziende…
+                  <br />
+                  <span className="text-xs text-gray-300">Può richiedere fino a 60 secondi</span>
+                </p>
+              )}
             </div>
           )}
 
